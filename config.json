@@ -20,7 +20,7 @@
 
   "maxAgeHours": 10,
   "heartbeatMaxAgeMin": 25,
-  "routing": "both",
+  "routing": "auto",
   "githubRepo": "jesterfuentes/jester-job-alerts",
   "notBefore": "2026-11-01T09:37:00Z"
 }
