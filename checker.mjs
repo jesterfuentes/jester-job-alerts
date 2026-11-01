@@ -11,6 +11,7 @@
 // Private values: secrets.json (local) or env NTFY_TOPIC / PC_TOPIC / HEARTBEAT_TOPIC (cloud).
 
 import { readFileSync, existsSync, appendFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -129,7 +130,17 @@ async function main() {
   // PC mode: heartbeat only. Silent (min priority) "PC is online" ping.
   if (!CLOUD) {
     await ntfyPost({ topic: HEARTBEAT_TOPIC, message: "alive", priority: 1 });
-    return log("heartbeat sent (PC mode does not contact OnlineJobs.ph)");
+    log("heartbeat sent (PC mode does not contact OnlineJobs.ph)");
+    // GitHub's own 10-minute schedule is often 30-60 min late, so while the PC is on
+    // it asks GitHub to run the check right now. The check itself still runs on GitHub's servers.
+    try {
+      const gh = ["C:\\Program Files\\GitHub CLI\\gh.exe", "gh"].find((p) => p === "gh" || existsSync(p));
+      execFileSync(gh, ["workflow", "run", "check-jobs.yml", "-R", config.githubRepo], { stdio: "pipe", timeout: 60000 });
+      log("asked GitHub to run the check now");
+    } catch (e) {
+      log(`could not trigger GitHub run (GitHub's own schedule still covers it): ${String(e.stderr || e.message).trim()}`);
+    }
+    return;
   }
 
   // Where should alerts go? PC if its heartbeat is fresh, otherwise the phone.
