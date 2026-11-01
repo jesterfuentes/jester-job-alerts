@@ -1,6 +1,6 @@
-# olj-job-alerts
+# jester-job-alerts
 
-Personal tool that watches OnlineJobs.ph search results for new editing jobs
+Personal tool that watches olj search results for new editing jobs
 and sends a push alert through ntfy.
 
 - A GitHub Actions job does all the checking.
