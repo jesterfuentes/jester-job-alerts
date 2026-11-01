@@ -1,0 +1,19 @@
+name: Test OLJ access
+
+# Manual test: can GitHub's servers load OnlineJobs.ph search results?
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch OLJ search page
+        run: |
+          code=$(curl -s -o page.html -w "%{http_code}" \
+            -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) personal-job-alert/1.0" \
+            "https://www.onlinejobs.ph/jobseekers/jobsearch?jobkeyword=video+editor")
+          echo "HTTP status: $code"
+          echo "Page size (bytes): $(wc -c < page.html)"
+          echo "Job links found: $(grep -o 'jobseekers/job/' page.html | wc -l)"
+          if [ "$code" != "200" ]; then echo "BLOCKED or error"; head -c 400 page.html; exit 1; fi
