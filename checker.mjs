@@ -22,8 +22,8 @@ const dir = dirname(fileURLToPath(import.meta.url));
 const config = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
 const secretsPath = join(dir, "secrets.json");
 const secrets = existsSync(secretsPath) ? JSON.parse(readFileSync(secretsPath, "utf8")) : {};
-const ALERT_TOPIC = process.env.NTFY_TOPIC || secrets.ntfyTopic;
-const HEARTBEAT_TOPIC = process.env.HEARTBEAT_TOPIC || secrets.heartbeatTopic;
+const ALERT_TOPIC = (process.env.NTFY_TOPIC || secrets.ntfyTopic || "").trim();
+const HEARTBEAT_TOPIC = (process.env.HEARTBEAT_TOPIC || secrets.heartbeatTopic || "").trim();
 if (!ALERT_TOPIC || !HEARTBEAT_TOPIC) {
   console.error("Missing topics: set secrets.json (PC) or NTFY_TOPIC / HEARTBEAT_TOPIC env vars (cloud).");
   process.exit(1);
