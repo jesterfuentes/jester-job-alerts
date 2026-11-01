@@ -1,20 +1,16 @@
 // OnlineJobs.ph job alert checker.
-// Reads public search results, sends new matching jobs to your phone via ntfy.
 //
-// Two ways to run it:
-//   PC mode (default)   remembers jobs in seen.json, sends a "PC is alive" heartbeat when done.
-//   Cloud mode (--cloud) GitHub backup: does nothing while the PC's heartbeat is fresh;
-//                        otherwise checks, using your ntfy alert history to avoid duplicates.
+//   node checker.mjs                 PC mode: ONLY sends the "PC is online" heartbeat.
+//                                    Never contacts OnlineJobs.ph (keeps the home IP out of it).
+//   node checker.mjs --cloud         Real check (GitHub Actions runs this): reads OLJ search results
+//                                    and sends new matching jobs to the PC topic if the PC heartbeat
+//                                    is fresh, otherwise to the phone topic.
+//   node checker.mjs --cloud --test  Same, but sends one alert from the newest matching job.
 //
-// Flags:
-//   --seed    remember all current jobs WITHOUT alerting (first run)
-//   --test    send ONE real-looking alert from the newest matching job
-//   --cloud   cloud mode
-//   --force   (cloud) ignore the heartbeat and check anyway
-//
-// Private values come from secrets.json (PC) or env vars NTFY_TOPIC / HEARTBEAT_TOPIC (cloud).
+// Duplicates are prevented by reading the last 12h of both alert topics from ntfy.
+// Private values: secrets.json (local) or env NTFY_TOPIC / PC_TOPIC / HEARTBEAT_TOPIC (cloud).
 
-import { readFileSync, writeFileSync, existsSync, appendFileSync } from "node:fs";
+import { readFileSync, existsSync, appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -22,25 +18,25 @@ const dir = dirname(fileURLToPath(import.meta.url));
 const config = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
 const secretsPath = join(dir, "secrets.json");
 const secrets = existsSync(secretsPath) ? JSON.parse(readFileSync(secretsPath, "utf8")) : {};
-const ALERT_TOPIC = (process.env.NTFY_TOPIC || secrets.ntfyTopic || "").trim();
-const HEARTBEAT_TOPIC = (process.env.HEARTBEAT_TOPIC || secrets.heartbeatTopic || "").trim();
-if (!ALERT_TOPIC || !HEARTBEAT_TOPIC) {
-  console.error("Missing topics: set secrets.json (PC) or NTFY_TOPIC / HEARTBEAT_TOPIC env vars (cloud).");
+const topic = (envName, key) => (process.env[envName] || secrets[key] || "").trim();
+const PHONE_TOPIC = topic("NTFY_TOPIC", "ntfyTopic");
+const PC_TOPIC = topic("PC_TOPIC", "pcTopic");
+const HEARTBEAT_TOPIC = topic("HEARTBEAT_TOPIC", "heartbeatTopic");
+
+const CLOUD = process.argv.includes("--cloud");
+const TEST = process.argv.includes("--test");
+if (!HEARTBEAT_TOPIC || (CLOUD && (!PHONE_TOPIC || !PC_TOPIC))) {
+  console.error("Missing topics: set secrets.json (PC) or NTFY_TOPIC / PC_TOPIC / HEARTBEAT_TOPIC env vars (cloud).");
   process.exit(1);
 }
 
-const seenPath = join(dir, "seen.json");
 const logPath = join(dir, "run.log");
-const SEED = process.argv.includes("--seed");
-const TEST = process.argv.includes("--test");
-const CLOUD = process.argv.includes("--cloud");
-const FORCE = process.argv.includes("--force");
 const BASE = "https://www.onlinejobs.ph";
 const NTFY = "https://ntfy.sh";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) personal-job-alert/1.0";
 
 const log = (msg) => {
-  const line = `${new Date().toISOString()}  ${CLOUD ? "[cloud] " : ""}${msg}`;
+  const line = `${new Date().toISOString()}  ${CLOUD ? "[cloud] " : "[pc] "}${msg}`;
   console.log(line);
   try { appendFileSync(logPath, line + "\n"); } catch {}
 };
@@ -109,9 +105,9 @@ async function ntfyPost(payload) {
   if (!res.ok) throw new Error(`ntfy HTTP ${res.status}`);
 }
 
-const notify = (job) =>
-  ntfyPost({
-    topic: ALERT_TOPIC,
+function alertPayload(topic, job) {
+  return {
+    topic,
     title: `New OLJ: ${job.title}`.slice(0, 120),
     message: [job.pay, [job.type, job.posted && `posted ${job.posted}`].filter(Boolean).join(" · "), job.desc.slice(0, 180)]
       .filter(Boolean).join("\n"),
@@ -119,7 +115,8 @@ const notify = (job) =>
     priority: 4,
     tags: ["briefcase"],
     actions: [{ action: "view", label: "Open job", url: job.url }],
-  });
+  };
+}
 
 // Messages ntfy still has for a topic (it keeps 12 hours).
 async function ntfyHistory(topic, since) {
@@ -129,27 +126,36 @@ async function ntfyHistory(topic, since) {
 }
 
 async function main() {
-  // Cloud mode: stand down while the PC is alive.
-  if (CLOUD && !FORCE) {
-    const beats = await ntfyHistory(HEARTBEAT_TOPIC, `${config.heartbeatMaxAgeMin}m`);
-    if (beats.length) return log(`PC heartbeat is fresh (${beats.length} in last ${config.heartbeatMaxAgeMin} min) — skipping`);
-    log("no PC heartbeat — PC looks off, cloud will check");
+  // PC mode: heartbeat only. Silent (min priority) "PC is online" ping.
+  if (!CLOUD) {
+    await ntfyPost({ topic: HEARTBEAT_TOPIC, message: "alive", priority: 1 });
+    return log("heartbeat sent (PC mode does not contact OnlineJobs.ph)");
   }
 
-  // Job IDs already alerted (by the PC or the cloud) in the last 12h.
-  let history = [];
+  // Where should alerts go? PC if its heartbeat is fresh, otherwise the phone.
+  let pcOnline = false;
   try {
-    history = await ntfyHistory(ALERT_TOPIC, "12h");
+    pcOnline = (await ntfyHistory(HEARTBEAT_TOPIC, `${config.heartbeatMaxAgeMin}m`)).length > 0;
   } catch (e) {
-    if (CLOUD) return log(`cannot read alert history, stopping to avoid duplicates: ${e.message}`);
-    log(`warning: cannot read alert history: ${e.message}`);
+    log(`cannot read heartbeat, assuming PC is off: ${e.message}`);
   }
-  const alerted = new Set(history.map((m) => (m.click || "").match(/-(\d+)\/?$/)?.[1]).filter(Boolean));
+  // routing "both" = send to PC and phone (used while setting up); "auto" = PC if online, else phone
+  const destinations = config.routing === "auto" ? [pcOnline ? PC_TOPIC : PHONE_TOPIC] : [PC_TOPIC, PHONE_TOPIC];
+  log(`PC ${pcOnline ? "online" : "offline"}, routing=${config.routing} -> ${destinations.length} destination(s)`);
 
-  const seen = new Set(!CLOUD && existsSync(seenPath) ? JSON.parse(readFileSync(seenPath, "utf8")) : []);
+  // Job IDs already alerted to either topic in the last 12h.
+  let phoneHistory = [], pcHistory = [];
+  try {
+    [phoneHistory, pcHistory] = await Promise.all([ntfyHistory(PHONE_TOPIC, "12h"), ntfyHistory(PC_TOPIC, "12h")]);
+  } catch (e) {
+    return log(`cannot read alert history, stopping to avoid duplicates: ${e.message}`);
+  }
+  const alerted = new Set(
+    [...phoneHistory, ...pcHistory].map((m) => (m.click || "").match(/-(\d+)\/?$/)?.[1]).filter(Boolean)
+  );
+
   const found = new Map();
   let failures = 0;
-
   for (const term of config.searches) {
     try {
       for (const job of await fetchSearch(term)) if (!found.has(job.id)) found.set(job.id, job);
@@ -161,14 +167,13 @@ async function main() {
   }
 
   if (failures === config.searches.length) {
-    log("ALL searches failed — site may be down or blocking. Nothing saved.");
-    if (!CLOUD) process.exit(1);
-    // Cloud: warn the phone once per 12h, then exit quietly (no failed-run email spam).
-    if (!history.some((m) => (m.title || "").startsWith("OLJ cloud"))) {
+    log("ALL searches failed — site may be down or blocking.");
+    // Warn once per 12h (to the phone), then exit quietly so GitHub doesn't send failed-run emails.
+    if (![...phoneHistory].some((m) => (m.title || "").startsWith("OLJ cloud"))) {
       await ntfyPost({
-        topic: ALERT_TOPIC,
+        topic: PHONE_TOPIC,
         title: "OLJ cloud backup can't reach OnlineJobs.ph",
-        message: "The GitHub backup is being blocked or the site is down. Keep your PC on for alerts.",
+        message: "GitHub is being blocked or the site is down. Tell Claude so we can fix it.",
         priority: 3,
         tags: ["warning"],
       });
@@ -183,40 +188,22 @@ async function main() {
   if (TEST) {
     const job = matches[0];
     if (!job) return log("no matching job to test with");
-    await notify(job);
+    for (const t of destinations) await ntfyPost(alertPayload(t, job));
     return log(`TEST alert sent: ${job.title}`);
   }
 
-  // Only alert on recent jobs: newer than the cutoff, and not older than maxAgeHours
-  // (the alert history only goes back 12h, so older jobs can't be checked for duplicates).
+  // Only recent jobs: newer than the cutoff, and within maxAgeHours
+  // (alert history only goes back 12h, so older jobs can't be checked for duplicates).
   const oldestOk = Math.max(Date.now() - config.maxAgeHours * 3600e3, Date.parse(config.notBefore));
-  const fresh = matches.filter((j) => !seen.has(j.id) && !alerted.has(j.id) && j.postedMs >= oldestOk);
-  log(`fetched ${all.length} jobs, ${matches.length} match, ${fresh.length} to alert${SEED ? " (seed mode: no alerts)" : ""}`);
+  const fresh = matches.filter((j) => !alerted.has(j.id) && j.postedMs >= oldestOk);
+  log(`fetched ${all.length} jobs, ${matches.length} match, ${fresh.length} to alert`);
 
-  const failedIds = new Set();
-  if (!SEED) {
-    for (const job of fresh.reverse()) { // oldest of the new ones first
-      try {
-        await notify(job);
-        log(`ALERT: ${job.title} — ${job.url}`);
-      } catch (e) {
-        log(`notify failed for ${job.id}: ${e.message}`);
-        failedIds.add(job.id); // not remembered, so the next run retries it
-      }
-    }
-  }
-
-  if (!CLOUD) {
-    // remember everything we saw (matched or not) so it never alerts twice
-    for (const j of all) if (!failedIds.has(j.id)) seen.add(j.id);
-    const keep = [...seen].sort((a, b) => Number(b) - Number(a)).slice(0, 5000);
-    writeFileSync(seenPath, JSON.stringify(keep));
-
-    // "PC is alive" ping so the cloud backup stays quiet. Silent (min priority), only after a good run.
+  for (const job of fresh.reverse()) { // oldest of the new ones first
     try {
-      await ntfyPost({ topic: HEARTBEAT_TOPIC, message: "alive", priority: 1 });
+      for (const t of destinations) await ntfyPost(alertPayload(t, job));
+      log(`ALERT: ${job.title} — ${job.url}`);
     } catch (e) {
-      log(`heartbeat failed: ${e.message}`);
+      log(`notify failed for ${job.id}: ${e.message}`); // not in history, so the next run retries it
     }
   }
 }

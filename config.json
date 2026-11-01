@@ -1,23 +1,11 @@
 {
   "searches": [
     "podcast editor",
-    "audio podcast editor",
-    "video podcast editor",
-    "podcast video editor",
-    "podcast producer",
-    "podcast post production",
-    "long form editor",
-    "long-form video editor",
-    "short form editor",
-    "short-form video editor",
-    "social clips editor",
-    "clips editor",
     "video editor",
-    "youtube editor",
-    "youtube video editor",
-    "reels editor",
-    "content repurposing",
-    "audio editor"
+    "short form editor",
+    "long form editor",
+    "audio editor",
+    "clips editor"
   ],
 
   "mustMatch": ["edit", "podcast", "clip", "repurpos", "post-production", "post production"],
@@ -31,6 +19,7 @@
   "delayBetweenSearchesMs": 1500,
 
   "maxAgeHours": 10,
-  "heartbeatMaxAgeMin": 15,
+  "heartbeatMaxAgeMin": 25,
+  "routing": "both",
   "notBefore": "2026-11-01T09:37:00Z"
 }
