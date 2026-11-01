@@ -1,0 +1,35 @@
+name: Check jobs (cloud backup)
+
+# Backup for when the PC is off. The checker exits immediately while the PC's
+# heartbeat is fresh, so this normally does nothing.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Check even if the PC heartbeat is fresh (for testing)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: olj-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      HEARTBEAT_TOPIC: ${{ secrets.HEARTBEAT_TOPIC }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run checker (cloud mode)
+        run: node checker.mjs --cloud ${{ inputs.force && '--force' || '' }}

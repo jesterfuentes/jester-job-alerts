@@ -1,4 +1,4 @@
 # Private / local-only: never upload these
-config.json
+secrets.json
 seen.json
 run.log
