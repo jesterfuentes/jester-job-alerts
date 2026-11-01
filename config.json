@@ -1,11 +1,11 @@
 {
   "searches": [
     "podcast editor",
-    "video editor",
+    "podcast video editor",
     "short form editor",
-    "long form editor",
-    "audio editor",
-    "clips editor"
+    "clips editor",
+    "podcast audio editor",
+    "youtube podcast editor"
   ],
 
   "mustMatch": ["edit", "podcast", "clip", "repurpos", "post-production", "post production"],
@@ -21,6 +21,6 @@
   "maxAgeHours": 10,
   "heartbeatMaxAgeMin": 25,
   "routing": "both",
-  "githubRepo": "jesterfuentes/olj-job-alerts",
+  "githubRepo": "jesterfuentes/jester-job-alerts",
   "notBefore": "2026-11-01T09:37:00Z"
 }
