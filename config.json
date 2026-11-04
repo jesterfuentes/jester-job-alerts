@@ -5,7 +5,9 @@
     "short form editor",
     "clips editor",
     "podcast audio editor",
-    "youtube podcast editor"
+    "youtube podcast editor",
+    "podcast",
+    "podcast producer"
   ],
 
   "mustMatch": ["edit", "podcast", "clip", "repurpos", "post-production", "post production"],
@@ -20,7 +22,7 @@
 
   "maxAgeHours": 10,
   "heartbeatMaxAgeMin": 25,
-  "routing": "auto",
+  "routing": "both",
   "githubRepo": "jesterfuentes/jester-job-alerts",
   "notBefore": "2026-11-01T09:37:00Z"
 }
